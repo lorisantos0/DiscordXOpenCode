@@ -134,7 +134,11 @@ export default {
       { number: 3, value: "reject", label: "⛔ Rejeitar", style: 4 },
     ];
 
-    const runModel = process.env.DISCORD_RUN_MODEL || null;
+    const runModelFile =
+      process.env.DISCORD_RUN_MODEL_FILE ||
+      join(homedir(), ".config", "opencode", "discord-run-model");
+    const runModel =
+      process.env.DISCORD_RUN_MODEL || readTextFile(runModelFile) || null;
 
     // Session the user is actually chatting in, learned from events.
     let chatSessionID = null;
@@ -775,14 +779,22 @@ export default {
     // Sessions created by this plugin, or living in the home directory, are
     // never used (they have no project context and may never run).
     const findProjectSession = async () => {
+      const items = await listSessions();
+      const byId = (id) => items.find((item) => item?.id === id);
+
       if (chatSessionID && !botSessions.has(chatSessionID)) {
-        const dir = await sessionDirectory(chatSessionID);
+        const item = byId(chatSessionID);
+        const dir =
+          item?.location?.directory ?? (await sessionDirectory(chatSessionID));
         if (isUsableDirectory(dir)) {
-          return { id: chatSessionID, directory: dir };
+          return {
+            id: chatSessionID,
+            directory: dir,
+            model: item?.model ?? null,
+          };
         }
       }
 
-      const items = await listSessions();
       const usable = items
         .filter(
           (item) =>
@@ -798,7 +810,11 @@ export default {
 
       const best = usable[0];
       return best
-        ? { id: best.id, directory: best.location.directory }
+        ? {
+            id: best.id,
+            directory: best.location?.directory ?? null,
+            model: best.model ?? null,
+          }
         : null;
     };
 
@@ -890,14 +906,23 @@ export default {
       }
 
       // `new` mode — or nothing usable to reuse: create a fresh session that
-      // inherits the project working directory.
+      // inherits the project working directory and model.
       if (!sessionID) {
         const runDirectory =
           process.env.DISCORD_RUN_DIRECTORY || resolved?.directory || null;
 
+        // Prefer an explicitly configured model; otherwise inherit the model
+        // the project already uses (avoids the server default, which may point
+        // at a deprecated model).
+        const inheritedModel =
+          resolved?.model?.id && resolved?.model?.providerID
+            ? { id: resolved.model.id, providerID: resolved.model.providerID }
+            : null;
+        const sessionModel = modelRef || inheritedModel;
+
         const created = await serverRequest("POST", "/api/session", {
           agent: process.env.DISCORD_RUN_AGENT || "build",
-          ...(modelRef ? { model: modelRef } : {}),
+          ...(sessionModel ? { model: sessionModel } : {}),
           ...(runDirectory ? { location: { directory: runDirectory } } : {}),
         });
         source = "created";
@@ -927,7 +952,7 @@ export default {
         sessionID,
         source,
         mode,
-        model: runModel,
+        model: modelRef || resolved?.model || null,
         prompt,
       });
 

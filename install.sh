@@ -141,7 +141,16 @@ else
   fi
 fi
 
-# --- 5. Install the plugin last (so a running OpenCode hot-reloads it) -------
+# --- 5. Default model for new sessions ---------------------------------------
+# Without this, a new session falls back to the server default, which may point
+# at a deprecated model (e.g. a retired free model) and fail with no reply.
+echo
+read -rp "Modelo para sessoes novas [opencode/big-pickle]: " RUN_MODEL
+RUN_MODEL="${RUN_MODEL:-opencode/big-pickle}"
+printf '%s' "$RUN_MODEL" > "$CONFIG_DIR/discord-run-model"
+ok "  Modelo: $RUN_MODEL"
+
+# --- 6. Install the plugin last (so a running OpenCode hot-reloads it) -------
 mkdir -p "$PLUGIN_DIR"
 cp -f "$SELF_DIR/plugin/discord.js" "$PLUGIN_DIR/discord.js"
 chmod 644 "$PLUGIN_DIR/discord.js" 2>/dev/null || true
@@ -150,4 +159,4 @@ ok "  Plugin: $PLUGIN_DIR/discord.js"
 echo
 ok "==> Tudo pronto."
 echo "Se o OpenCode ja estava a correr, recarrega o plugin (ou reinicia)."
-echo "Usa /question no canal. Opcional: DISCORD_RUN_MODEL=provider/model"
+echo "Usa /question no canal."

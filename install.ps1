@@ -94,6 +94,11 @@ if (-not $guildId) {
   }
 }
 
+$runModel = Read-Host "Modelo para sessoes novas [opencode/big-pickle]"
+if ([string]::IsNullOrWhiteSpace($runModel)) { $runModel = "opencode/big-pickle" }
+Set-Content -Path (Join-Path $ConfigDir "discord-run-model") -Value $runModel -NoNewline -Encoding ascii
+Ok "  Modelo: $runModel"
+
 New-Item -ItemType Directory -Force -Path $PluginDir | Out-Null
 Copy-Item (Join-Path $SelfDir "plugin\discord.js") (Join-Path $PluginDir "discord.js") -Force
 Ok "  Plugin: $((Join-Path $PluginDir 'discord.js'))"
@@ -101,4 +106,4 @@ Ok "  Plugin: $((Join-Path $PluginDir 'discord.js'))"
 Write-Host ""
 Ok "==> Tudo pronto."
 Write-Host "Se o OpenCode ja estava a correr, recarrega o plugin (ou reinicia)."
-Write-Host "Usa /question no canal. Opcional: `$env:DISCORD_RUN_MODEL='provider/model'"
+Write-Host "Usa /question no canal."

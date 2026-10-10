@@ -3,4 +3,5 @@ discord-bot-token
 discord-user-id
 discord-channel-id
 discord-aliases.json
+discord-run-model
 .env

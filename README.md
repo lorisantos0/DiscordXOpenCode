@@ -87,7 +87,9 @@ Cola o token. O instalador trata do resto **sozinho**:
    — se já o adicionaste, avança logo;
 3. **escolhe o canal sozinho** (prefere `#general`) e guarda o `channel ID`;
 4. **define o owner** como o dono do servidor e guarda o `user ID`;
-5. copia o plugin para `~/.config/opencode/plugins/discord.js`.
+5. pergunta o **modelo** para as sessões novas (pré-preenchido com
+   `opencode/big-pickle` — carrega Enter para aceitar) e guarda-o em `discord-run-model`;
+6. copia o plugin para `~/.config/opencode/plugins/discord.js`.
 
 ### 4. Usa
 
@@ -135,8 +137,13 @@ Tudo é opcional: o instalador já escreve os ficheiros por defeito em `~/.confi
 | `discord-user-id` | Único utilizador autorizado a dar comandos. |
 | `discord-channel-id` | Canal onde o bot fala. |
 | `discord-aliases.json` | Nome curto de cada sessão (`{ "ses_...": "loja-tcg" }`). |
+| `discord-run-model` | Modelo para sessões novas, ex. `opencode/big-pickle` (opcional). |
 
 Todos ficam **fora** do repositório e no `.gitignore`.
+
+> **Modelo das sessões novas.** Se `discord-run-model` (ou `DISCORD_RUN_MODEL`) não estiver
+> definido, a sessão nova **herda o modelo da sessão atual do projeto** — evita cair no
+> modelo por defeito do servidor, que pode estar descontinuado.
 
 ### Variáveis de ambiente
 
@@ -145,13 +152,13 @@ Todos ficam **fora** do repositório e no `.gitignore`.
 | `DISCORD_BOT_TOKEN` | Token do bot (alternativa ao ficheiro). |
 | `DISCORD_USER_ID` | Único utilizador autorizado (alternativa: ficheiro). |
 | `DISCORD_CHANNEL_ID` | Canal onde o bot fala (alternativa: ficheiro). |
-| `DISCORD_RUN_MODEL` | Modelo para sessões novas, ex. `anthropic/claude-sonnet-4`. |
+| `DISCORD_RUN_MODEL` | Modelo para sessões novas, ex. `opencode/big-pickle` (alternativa: ficheiro). |
 | `DISCORD_RUN_AGENT` | Agente para sessões novas (por defeito `build`). |
 | `DISCORD_RUN_DIRECTORY` | Pasta de trabalho para sessões novas. |
 | `DISCORD_RUN_TIMEOUT` | Timeout em ms (por defeito 600000). |
 
 Ficheiros alternativos: `DISCORD_BOT_TOKEN_FILE`, `DISCORD_USER_ID_FILE`,
-`DISCORD_CHANNEL_ID_FILE`, `DISCORD_ALIASES_FILE`.
+`DISCORD_CHANNEL_ID_FILE`, `DISCORD_ALIASES_FILE`, `DISCORD_RUN_MODEL_FILE`.
 
 ### Onde obter os IDs (se precisares de os pôr à mão)
 

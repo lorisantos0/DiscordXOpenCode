@@ -9,5 +9,6 @@ rm -f "$CONFIG_DIR/discord-bot-token"
 rm -f "$CONFIG_DIR/discord-user-id"
 rm -f "$CONFIG_DIR/discord-channel-id"
 rm -f "$CONFIG_DIR/discord-aliases.json"
+rm -f "$CONFIG_DIR/discord-run-model"
 
 echo "Removido. Reinicia o OpenCode."
