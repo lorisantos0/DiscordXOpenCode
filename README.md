@@ -155,7 +155,7 @@ Todos ficam **fora** do repositório e no `.gitignore`.
 | `DISCORD_RUN_MODEL` | Modelo para sessões novas, ex. `opencode/big-pickle` (alternativa: ficheiro). |
 | `DISCORD_RUN_AGENT` | Agente para sessões novas (por defeito `build`). |
 | `DISCORD_RUN_DIRECTORY` | Pasta de trabalho para sessões novas. |
-| `DISCORD_RUN_TIMEOUT` | Timeout em ms (por defeito 600000). |
+| `DISCORD_RUN_TIMEOUT` | Timeout opcional em ms para o `/question` (por defeito **sem limite**: espera até o OpenCode acabar, mesmo que demore horas). Define um valor positivo (ex.: `600000`) só se quiseres mesmo um corte. `0` ou ausente = sem limite. |
 
 Ficheiros alternativos: `DISCORD_BOT_TOKEN_FILE`, `DISCORD_USER_ID_FILE`,
 `DISCORD_CHANNEL_ID_FILE`, `DISCORD_ALIASES_FILE`, `DISCORD_RUN_MODEL_FILE`.
@@ -197,6 +197,7 @@ Ficheiros alternativos: `DISCORD_BOT_TOKEN_FILE`, `DISCORD_USER_ID_FILE`,
 | Bot offline no Discord com `closed:4004` (auth) | Existe uma variável de ambiente antiga a tentar sobrepor-se? O **ficheiro** `~/.config/opencode/discord-bot-token` ganha, mas convém remover/mudar a `DISCORD_BOT_TOKEN` para não haver confusão. |
 | O bot responde a mais pessoas | Define o owner (corre o instalador ou escreve o teu ID em `~/.config/opencode/discord-user-id`). |
 | Respostas no canal errado | Escreve o channel ID em `~/.config/opencode/discord-channel-id` e reinicia. |
+| Um `/question` demora muito e parece "preso" | É normal: por defeito **não há timeout**, o bot espera até o OpenCode acabar (pode demorar dezenas de minutos). O progresso fica em `opencode-discord-debug.log` (linhas `run:waiting` a cada 5 min). A resposta final é enviada quando terminar. |
 
 ---
 

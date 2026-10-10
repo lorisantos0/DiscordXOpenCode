@@ -872,7 +872,13 @@ export default {
     };
 
     const runOpenCode = async (prompt, options = {}) => {
-      const runTimeout = Number(process.env.DISCORD_RUN_TIMEOUT || 600_000);
+      // No hard timeout by default: a long run (e.g. 50 min) must be allowed
+      // to finish instead of being reported as a failure. Set
+      // DISCORD_RUN_TIMEOUT (ms) to a positive value to opt back into a limit.
+      const configuredTimeout = Number(process.env.DISCORD_RUN_TIMEOUT || 0);
+      const hasTimeout =
+        Number.isFinite(configuredTimeout) && configuredTimeout > 0;
+      const runTimeout = hasTimeout ? configuredTimeout : Infinity;
       const modelRef = parseModelRef(runModel);
       const sessionRef = String(options.sessionID || "").trim();
       const mode = options.mode === "new" ? "new" : "current";
@@ -971,7 +977,8 @@ export default {
         };
       }
 
-      const deadline = Date.now() + runTimeout;
+      const deadline = hasTimeout ? Date.now() + runTimeout : Infinity;
+      let lastHeartbeat = Date.now();
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 1_500));
 
@@ -981,7 +988,18 @@ export default {
 
         const idle = info.time?.idle ?? null;
         const idleChanged = idle !== null && idle !== beforeIdle;
-        if (!idleChanged) continue;
+        if (!idleChanged) {
+          // Still working: log a heartbeat every 5 min so long runs are
+          // visible (and not mistaken for a hang) without spamming the log.
+          if (Date.now() - lastHeartbeat > 300_000) {
+            lastHeartbeat = Date.now();
+            debugLog("run:waiting", {
+              sessionID,
+              elapsedMs: Date.now() - promptSentAt,
+            });
+          }
+          continue;
+        }
 
         // Idle can flip a moment before the streamed text is persisted, so
         // keep reading the transcript for a short while before giving up.
