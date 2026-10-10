@@ -47,8 +47,7 @@ export default {
     const userIdFile =
       process.env.DISCORD_USER_ID_FILE ||
       join(homedir(), ".config", "opencode", "discord-user-id");
-    let userId =
-      process.env.DISCORD_USER_ID || readTextFile(userIdFile) || null;
+    let userId = readTextFile(userIdFile) || process.env.DISCORD_USER_ID || null;
     const writeTextFile = (file, text) => {
       try {
         writeFileSync(file, String(text));
@@ -57,12 +56,11 @@ export default {
         return false;
       }
     };
-    const botToken = process.env.DISCORD_BOT_TOKEN || readTextFile(botTokenFile);
+    const botToken = readTextFile(botTokenFile) || process.env.DISCORD_BOT_TOKEN;
     const channelIdFile =
       process.env.DISCORD_CHANNEL_ID_FILE ||
       join(homedir(), ".config", "opencode", "discord-channel-id");
-    let channelId =
-      process.env.DISCORD_CHANNEL_ID || readTextFile(channelIdFile) || null;
+    let channelId = readTextFile(channelIdFile) || process.env.DISCORD_CHANNEL_ID || null;
 
     if (!webhookUrl && !botToken) {
       console.error(
@@ -137,8 +135,7 @@ export default {
     const runModelFile =
       process.env.DISCORD_RUN_MODEL_FILE ||
       join(homedir(), ".config", "opencode", "discord-run-model");
-    const runModel =
-      process.env.DISCORD_RUN_MODEL || readTextFile(runModelFile) || null;
+    const runModel = readTextFile(runModelFile) || process.env.DISCORD_RUN_MODEL || null;
 
     // Session the user is actually chatting in, learned from events.
     let chatSessionID = null;

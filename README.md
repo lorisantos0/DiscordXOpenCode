@@ -160,6 +160,12 @@ Todos ficam **fora** do repositório e no `.gitignore`.
 Ficheiros alternativos: `DISCORD_BOT_TOKEN_FILE`, `DISCORD_USER_ID_FILE`,
 `DISCORD_CHANNEL_ID_FILE`, `DISCORD_ALIASES_FILE`, `DISCORD_RUN_MODEL_FILE`.
 
+> **Ficheiro vs. variável de ambiente.** Para o token, owner, canal e modelo, o
+> **ficheiro ganha** sempre que exista; a variável de ambiente só é usada quando o
+> ficheiro está ausente. Isto evita que uma variável antiga (por exemplo um
+> `DISCORD_BOT_TOKEN` deixado por um bot anterior) se sobreponha em silêncio ao
+> ficheiro criado pelo instalador.
+
 ### Onde obter os IDs (se precisares de os pôr à mão)
 
 - **User ID** (o teu): Discord → **Definições → Avançadas → Modo de programador** (liga),
@@ -188,6 +194,7 @@ Ficheiros alternativos: `DISCORD_BOT_TOKEN_FILE`, `DISCORD_USER_ID_FILE`,
 | O bot está online mas não responde | Confirma que ligaste **Message Content Intent** (aba Bot) e reinicia o OpenCode. |
 | `Token invalido` no instalador | O token está errado ou foi resetado — faz **Reset Token** e copia de novo. |
 | `Nothing configured` nos logs | O plugin não encontrou o token — corre o instalador. |
+| Bot offline no Discord com `closed:4004` (auth) | Existe uma variável de ambiente antiga a tentar sobrepor-se? O **ficheiro** `~/.config/opencode/discord-bot-token` ganha, mas convém remover/mudar a `DISCORD_BOT_TOKEN` para não haver confusão. |
 | O bot responde a mais pessoas | Define o owner (corre o instalador ou escreve o teu ID em `~/.config/opencode/discord-user-id`). |
 | Respostas no canal errado | Escreve o channel ID em `~/.config/opencode/discord-channel-id` e reinicia. |
 
