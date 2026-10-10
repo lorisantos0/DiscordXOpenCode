@@ -8,5 +8,6 @@ rm -f "$CONFIG_DIR/plugins/discord.js"
 rm -f "$CONFIG_DIR/discord-bot-token"
 rm -f "$CONFIG_DIR/discord-user-id"
 rm -f "$CONFIG_DIR/discord-channel-id"
+rm -f "$CONFIG_DIR/discord-aliases.json"
 
 echo "Removido. Reinicia o OpenCode."
