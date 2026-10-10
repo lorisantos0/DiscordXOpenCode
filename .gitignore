@@ -1,0 +1,6 @@
+# Secrets / local config — never commit these
+discord-bot-token
+discord-user-id
+discord-channel-id
+discord-aliases.json
+.env
