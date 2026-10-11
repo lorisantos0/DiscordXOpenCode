@@ -103,7 +103,13 @@ export default {
     let gateway = null;
     let heartbeatTimer = null;
     let reconnectTimer = null;
+    let gatewayWatchdogTimer = null;
     let reconnectDelay = 5000;
+    let heartbeatIntervalMs = 45_000;
+    let lastHeartbeatAckAt = 0;
+    let lastGatewayOkAt = Date.now();
+    let gatewayConnectStartedAt = 0;
+    let gatewayAttempting = false;
 
     const debounceFile = join(
       tmpdir(),
@@ -165,6 +171,15 @@ export default {
       return value.length > max ? `${value.slice(0, max - 1)}…` : value;
     };
 
+    // AbortSignal.timeout(...) keeps network calls from hanging forever (e.g. a
+    // half-open socket after the computer wakes up). Falls back to no signal on
+    // runtimes that lack it.
+    const timeoutSignal = (ms) =>
+      typeof AbortSignal !== "undefined" &&
+      typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(ms)
+        : undefined;
+
     const clamp = (content, max = 1900) =>
       content.length > max ? `${content.slice(0, max - 1)}…` : content;
 
@@ -210,6 +225,7 @@ export default {
             content: clamp(content),
             allowed_mentions: { users: [userId] },
           }),
+          signal: timeoutSignal(15_000),
         });
 
         if (!response.ok) {
@@ -248,6 +264,7 @@ export default {
             "Content-Type": "application/json",
           },
           body: body ? JSON.stringify(body) : undefined,
+          signal: timeoutSignal(15_000),
         });
 
         const text = await response.text();
@@ -707,6 +724,7 @@ export default {
             "Content-Type": "application/json",
           },
           body: body ? JSON.stringify(body) : undefined,
+          signal: timeoutSignal(30_000),
         });
 
         const text = await response.text();
@@ -818,6 +836,32 @@ export default {
       return text || null;
     };
 
+    // Latest user prompt in a transcript (user messages carry `text`).
+    const extractUserText = (messages, since = 0) => {
+      if (!Array.isArray(messages)) return null;
+
+      const threshold = Math.max(0, since - 1_500);
+      const users = messages.filter((item) => {
+        if (item?.type !== "user") return false;
+        if (!threshold) return true;
+        return (item?.time?.created ?? 0) >= threshold;
+      });
+      if (users.length === 0) return null;
+
+      const last = users.reduce((best, item) =>
+        (item?.time?.created ?? 0) > (best?.time?.created ?? 0) ? item : best
+      );
+
+      const text =
+        typeof last?.text === "string" && last.text.trim()
+          ? last.text
+          : typeof last?.metadata?.displayText === "string"
+          ? last.metadata.displayText
+          : "";
+
+      return text.trim() || null;
+    };
+
     const normalizeDir = (dir) =>
       String(dir || "")
         .replace(/[\\/]+$/, "")
@@ -918,6 +962,29 @@ export default {
     const sessionDirectory = async (sessionID) => {
       const result = await serverRequest("GET", `/api/session/${sessionID}`);
       return result.data?.data?.location?.directory ?? null;
+    };
+
+    // "alias — title" so completion notifications say which session finished.
+    const describeSession = async (sessionID) => {
+      if (!sessionID || sessionID === "unknown-session") return null;
+
+      const result = await serverRequest("GET", `/api/session/${sessionID}`);
+      const data = result.data?.data;
+      if (!data) return null;
+
+      const alias = ensureAlias({ id: sessionID, title: data.title });
+      const title = truncate(data.title || "(sem título)", 100);
+      return alias ? `${alias} — ${title}` : title;
+    };
+
+    const lastUserPrompt = async (sessionID) => {
+      if (!sessionID || sessionID === "unknown-session") return null;
+
+      const result = await serverRequest(
+        "GET",
+        `/api/session/${sessionID}/message`
+      );
+      return extractUserText(result.data?.data);
     };
 
     // Pick the conversation the user is actually working in: the one open in
@@ -1340,7 +1407,10 @@ export default {
       try {
         const response = await fetch(
           `${DISCORD_API}/channels/${channelId}/messages?limit=10`,
-          { headers: { Authorization: `Bot ${botToken}` } }
+          {
+            headers: { Authorization: `Bot ${botToken}` },
+            signal: timeoutSignal(15_000),
+          }
         );
 
         if (!response.ok) {
@@ -1849,122 +1919,203 @@ export default {
 
     const scheduleReconnect = () => {
       if (controller.signal.aborted) return;
+      if (reconnectTimer) return; // one pending attempt at a time
 
       const delay = reconnectDelay;
       reconnectDelay = Math.min(reconnectDelay * 2, 60_000);
       reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
         if (!controller.signal.aborted) void connectGateway();
       }, delay);
     };
 
-    const connectGateway = async () => {
+    // Self-healing watchdog. The normal reconnect is a single timer that can be
+    // lost when the computer sleeps/locks, and a socket can die silently without
+    // emitting a close. Run every ~10 s and, if needed, force a fresh attempt.
+    const ensureGateway = () => {
       if (!botToken || typeof WebSocket !== "function") return;
+      if (controller.signal.aborted) return;
 
-      let url = GATEWAY_URL;
-      const info = await botRequest("/gateway/bot");
-      if (info.ok && info.data?.url) {
-        url = `${info.data.url}/?v=10&encoding=json`;
-      }
+      const readyState = gateway?.readyState;
 
-      gatewayStatus = "connecting";
-      writeStatus();
-
-      let ws;
-      try {
-        ws = new WebSocket(url);
-      } catch (error) {
-        console.error("[discord-notification] gateway connect failed:", error);
-        gatewayStatus = "connect-error";
-        scheduleReconnect();
-        return;
-      }
-
-      gateway = ws;
-      let seq = null;
-
-      const send = (payload) => {
-        try {
-          ws.send(JSON.stringify(payload));
-        } catch {
-          /* socket closed */
-        }
-      };
-
-      ws.onopen = () => {
-        gatewayStatus = "open";
-        writeStatus();
-      };
-
-      ws.onclose = (event) => {
-        gatewayStatus = `closed:${event?.code ?? "?"}`;
-        writeStatus();
-        if (heartbeatTimer) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
-        }
-        gateway = null;
-        scheduleReconnect();
-      };
-
-      ws.onerror = () => {
-        gatewayStatus = "error";
-      };
-
-      ws.onmessage = async (event) => {
-        let payload;
-        try {
-          const raw =
-            typeof event.data === "string"
-              ? event.data
-              : await event.data.text();
-          payload = JSON.parse(raw);
-        } catch {
-          return;
-        }
-
-        const { op, d, s } = payload;
-        if (s != null) seq = s;
-
-        if (op === 10) {
-          const interval = d?.heartbeat_interval ?? 45_000;
-          if (heartbeatTimer) clearInterval(heartbeatTimer);
-          heartbeatTimer = setInterval(() => send({ op: 1, d: seq }), interval);
-          send({
-            op: 2,
-            d: {
-              token: botToken,
-              intents: 1,
-              properties: {
-                os: "windows",
-                browser: "opencode",
-                device: "opencode",
-              },
-            },
-          });
-        } else if (op === 1) {
-          send({ op: 1, d: seq });
-        } else if (op === 7 || op === 9) {
+      if (readyState === 0 || readyState === 1) {
+        // Still (supposedly) alive. Guard a hung connect and a silent death.
+        if (
+          readyState === 0 &&
+          gatewayConnectStartedAt &&
+          Date.now() - gatewayConnectStartedAt > 25_000
+        ) {
+          console.warn("[discord-notification] gateway connect timeout, retrying");
           try {
-            ws.close();
+            gateway.close(4000, "connect timeout");
           } catch {
             /* ignore */
           }
-        } else if (op === 0) {
-          const eventName = payload.t;
-          if (eventName === "READY") {
-            gatewayStatus = "ready";
-            reconnectDelay = 5000;
-            writeStatus();
-            void (async () => {
-              await detectChannel();
-              writeStatus();
-              await registerSlashCommands();
-            })();
-          } else if (eventName === "INTERACTION_CREATE") {
-            void handleInteraction(d);
+        } else if (
+          gatewayStatus === "ready" &&
+          lastHeartbeatAckAt &&
+          Date.now() - lastHeartbeatAckAt >
+            Math.max(heartbeatIntervalMs * 2, 60_000)
+        ) {
+          console.warn(
+            "[discord-notification] gateway heartbeat timeout, reconnecting"
+          );
+          try {
+            gateway.close(4000, "heartbeat timeout");
+          } catch {
+            /* ignore */
           }
         }
-      };
+        return;
+      }
+
+      // No live socket. If we have been down for a while, force a reconnect now
+      // instead of trusting a timer that may never fire.
+      if (Date.now() - lastGatewayOkAt < 15_000) return;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      reconnectDelay = 5000;
+      console.warn("[discord-notification] gateway offline, reconnecting now");
+      void connectGateway();
+    };
+
+    const connectGateway = async () => {
+      if (!botToken || typeof WebSocket !== "function") return;
+      if (controller.signal.aborted) return;
+      // Never open a second socket while one is connecting/opening.
+      if (gateway && (gateway.readyState === 0 || gateway.readyState === 1)) {
+        return;
+      }
+      if (gatewayAttempting) return;
+
+      gatewayAttempting = true;
+      try {
+        let url = GATEWAY_URL;
+        const info = await botRequest("/gateway/bot");
+        if (info.ok && info.data?.url) {
+          url = `${info.data.url}/?v=10&encoding=json`;
+        }
+
+        if (controller.signal.aborted) return;
+
+        gatewayStatus = "connecting";
+        writeStatus();
+
+        let ws;
+        gatewayConnectStartedAt = Date.now();
+        try {
+          ws = new WebSocket(url);
+        } catch (error) {
+          console.error("[discord-notification] gateway connect failed:", error);
+          gatewayStatus = "connect-error";
+          scheduleReconnect();
+          return;
+        }
+
+        gateway = ws;
+        let seq = null;
+
+        const send = (payload) => {
+          try {
+            ws.send(JSON.stringify(payload));
+          } catch {
+            /* socket closed */
+          }
+        };
+
+        ws.onopen = () => {
+          gatewayStatus = "open";
+          lastGatewayOkAt = Date.now();
+          if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+          }
+          writeStatus();
+        };
+
+        ws.onclose = (event) => {
+          gatewayStatus = `closed:${event?.code ?? "?"}`;
+          writeStatus();
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+          }
+          if (gateway === ws) gateway = null;
+          scheduleReconnect();
+        };
+
+        ws.onerror = () => {
+          gatewayStatus = "error";
+        };
+
+        ws.onmessage = async (event) => {
+          let payload;
+          try {
+            const raw =
+              typeof event.data === "string"
+                ? event.data
+                : await event.data.text();
+            payload = JSON.parse(raw);
+          } catch {
+            return;
+          }
+
+          const { op, d, s } = payload;
+          if (s != null) seq = s;
+          lastGatewayOkAt = Date.now();
+
+          if (op === 10) {
+            heartbeatIntervalMs = d?.heartbeat_interval ?? 45_000;
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+            heartbeatTimer = setInterval(
+              () => send({ op: 1, d: seq }),
+              heartbeatIntervalMs
+            );
+            send({
+              op: 2,
+              d: {
+                token: botToken,
+                intents: 1,
+                properties: {
+                  os: "windows",
+                  browser: "opencode",
+                  device: "opencode",
+                },
+              },
+            });
+          } else if (op === 1) {
+            send({ op: 1, d: seq });
+          } else if (op === 11) {
+            // Heartbeat acknowledged: the connection is genuinely alive.
+            lastHeartbeatAckAt = Date.now();
+          } else if (op === 7 || op === 9) {
+            try {
+              ws.close();
+            } catch {
+              /* ignore */
+            }
+          } else if (op === 0) {
+            const eventName = payload.t;
+            if (eventName === "READY") {
+              gatewayStatus = "ready";
+              reconnectDelay = 5000;
+              lastHeartbeatAckAt = Date.now();
+              writeStatus();
+              void (async () => {
+                await detectChannel();
+                writeStatus();
+                await registerSlashCommands();
+              })();
+            } else if (eventName === "INTERACTION_CREATE") {
+              void handleInteraction(d);
+            }
+          }
+        };
+      } finally {
+        gatewayAttempting = false;
+      }
     };
 
     void (async () => {
@@ -2112,13 +2263,27 @@ export default {
             }
           }
 
+          const notificationSessionID = getSessionId(event);
           console.log(
             "[discord-notification] Sending notification for",
             event.type,
-            getSessionId(event)
+            notificationSessionID
           );
 
-          await sendMessage(getMessage(event));
+          const sessionLabel = await describeSession(notificationSessionID);
+          const requestedPrompt = await lastUserPrompt(notificationSessionID);
+
+          // Single message: completion + session + the prompt that was asked.
+          let content = getMessage(event);
+          if (sessionLabel) content += `\n-# Sessão: ${sessionLabel}`;
+          if (requestedPrompt) {
+            content += `\n\n📝 **Prompt:**\n>>> ${truncate(
+              requestedPrompt,
+              1500
+            )}`;
+          }
+
+          await sendMessage(content);
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -2131,6 +2296,7 @@ export default {
 
     if (botToken) {
       pollTimer = setInterval(() => void pollDiscord(), 3_000);
+      gatewayWatchdogTimer = setInterval(ensureGateway, 10_000);
       void connectGateway();
       console.log("[discord-notification] Discord bot gateway enabled");
     } else {
@@ -2145,6 +2311,7 @@ export default {
       if (pollTimer) clearInterval(pollTimer);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (gatewayWatchdogTimer) clearInterval(gatewayWatchdogTimer);
 
       if (gateway) {
         try {

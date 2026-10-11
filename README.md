@@ -131,6 +131,25 @@ Também podes usar o `ID` (`ses_...`) ou parte do título.
 
 ---
 
+## Notificações de conclusão
+
+Quando uma tarefa termina, o bot envia **uma só** mensagem, com a sessão
+(`-# Sessão: <nome-curto> — <título>`) e o **prompt** que foi pedido:
+
+Exemplo:
+
+```
+✅ OpenCode finished working!
+-# Sessão: loja-tcg-carrinho — Loja TCG: carrinho
+
+📝 Prompt:
+>>> adiciona o filtro de graded
+```
+
+Se não conseguir descobrir a sessão ou o prompt, envia apenas a notificação base.
+
+---
+
 ## Configuração
 
 Tudo é opcional: o instalador já escreve os ficheiros por defeito em `~/.config/opencode/`.
@@ -201,6 +220,7 @@ Ficheiros alternativos: `DISCORD_BOT_TOKEN_FILE`, `DISCORD_USER_ID_FILE`,
 | `Token invalido` no instalador | O token está errado ou foi resetado — faz **Reset Token** e copia de novo. |
 | `Nothing configured` nos logs | O plugin não encontrou o token — corre o instalador. |
 | Bot offline no Discord com `closed:4004` (auth) | Existe uma variável de ambiente antiga a tentar sobrepor-se? O **ficheiro** `~/.config/opencode/discord-bot-token` ganha, mas convém remover/mudar a `DISCORD_BOT_TOKEN` para não haver confusão. |
+| Bot offline depois do PC bloquear/dormir | O plugin tem **auto-recuperação**: um *watchdog* a cada 10 s volta a ligar se o gateway cair e deteta ligações "mortas" (heartbeat sem ACK). Se mesmo assim ficar offline (por o OpenCode ter descarregado o plugin no bloqueio), um **reload/restart do OpenCode** volta a ligar. |
 | O bot responde a mais pessoas | Define o owner (corre o instalador ou escreve o teu ID em `~/.config/opencode/discord-user-id`). |
 | Respostas no canal errado | Escreve o channel ID em `~/.config/opencode/discord-channel-id` e reinicia. |
 | Um `/question` demora muito e parece "preso" | É normal: por defeito **não há timeout**, o bot espera até o OpenCode acabar (pode demorar dezenas de minutos). O progresso fica em `opencode-discord-debug.log` (linhas `run:waiting` a cada 5 min). A resposta final é enviada quando terminar. |
