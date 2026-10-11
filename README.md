@@ -12,6 +12,12 @@ perguntar e responder a partir do telemóvel como se estivesses no terminal.
 - Escolhes onde corre: **Current_Session** (a conversa aberta na app), **New_Session**
   (cria uma nova e passa a usá-la) ou uma sessão existente pelo **nome**, `session_id` ou `ID`.
 - Perguntas de permissão e formulários do OpenCode aparecem como **botões** no Discord.
+  Formulários com **vários campos** (várias perguntas ao mesmo tempo) são enviados em
+  **uma mensagem por pergunta** — cada mensagem mostra o **título + descrição** da
+  pergunta e os botões respetivos, para nunca se misturarem as opções. A resposta é
+  enviada automaticamente quando todas as perguntas obrigatórias estiverem escolhidas
+  (ou clicando em **✅ Enviar** nos campos de escolha múltipla). Campos de texto livre
+  continuam a responder-se por mensagem.
 
 ## Como funciona
 

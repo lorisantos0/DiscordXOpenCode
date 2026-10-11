@@ -329,6 +329,7 @@ export default {
     const buildFormPresentation = (form) => {
       const choices = [];
       const lines = [];
+      const groups = [];
       const fields = (form?.fields ?? []).filter((field) => !field.hidden);
       let number = 0;
 
@@ -337,7 +338,26 @@ export default {
           lines.push(`**${truncate(field.title || field.key, 80)}**`);
         }
 
-        const options = Array.isArray(field.options) ? field.options : [];
+        let options = Array.isArray(field.options) ? field.options : [];
+
+        // Booleans carry no options, but a Sim/Não button pair is natural.
+        if (field.type === "boolean" && options.length === 0) {
+          options = [
+            { value: true, label: "✅ Sim" },
+            { value: false, label: "❌ Não" },
+          ];
+        }
+
+        const group = {
+          key: field.key,
+          title: field.title || field.key,
+          description: field.description || field.prompt || "",
+          type: field.type,
+          required: field.required !== false,
+          minItems: field.minItems ?? 0,
+          options: [],
+          freeText: options.length === 0,
+        };
 
         if (options.length === 0) {
           choices.push({
@@ -350,24 +370,30 @@ export default {
           lines.push(
             `✏️ ${truncate(field.title || field.key, 80)} (responde com o texto)`
           );
+          groups.push(group);
           continue;
         }
 
         for (const option of options) {
           number += 1;
-          const label = option.label || option.value || String(number);
-          choices.push({
+          const label = option.label || String(option.value ?? number);
+          const choice = {
             number,
             key: field.key,
             type: field.type,
             value: option.value ?? option.label ?? label,
             label,
-          });
+            description: option.description || "",
+          };
+          choices.push(choice);
+          group.options.push(choice);
           lines.push(`${number}. ${truncate(label, 120)}`);
         }
+
+        groups.push(group);
       }
 
-      return { choices, lines };
+      return { choices, lines, fields: groups };
     };
 
     const getAttentionMessage = (event) => {
@@ -394,10 +420,12 @@ export default {
       const form = event.data?.form;
       const title =
         truncate(form?.title, 150) || "OpenCode is waiting for your choice";
-      const { lines } = buildFormPresentation(form);
+      const { lines, fields } = buildFormPresentation(form);
       const detail = lines.length ? `\n${lines.join("\n")}` : "";
       const hint =
-        "\n\nResponde aqui no Discord com o número da opção (ex.: `1`, ou `1,2` se forem várias).";
+        fields.length > 1
+          ? "\n\nResponde aqui no Discord com o número de uma opção de **cada** campo, separados por vírgulas (ex.: `1,4,7`)."
+          : "\n\nResponde aqui no Discord com o número da opção (ex.: `1`).";
 
       return clamp(
         `📝 <@${userId}> OpenCode is waiting for you to choose!\n**${title}**${detail}${hint}`
@@ -425,6 +453,126 @@ export default {
 
       return rows;
     };
+
+    // Forms can hold several fields; buttons are grouped per field and the
+    // answers are accumulated until every field is filled in.
+    const isChoiceSelected = (field, answers, choice) => {
+      const value = answers[field.key];
+      if (field.type === "multiselect") {
+        return Array.isArray(value) && value.includes(choice.value);
+      }
+      return value !== undefined && value === choice.value;
+    };
+
+    const fieldSatisfied = (field, answers) => {
+      const value = answers[field.key];
+      if (field.type === "multiselect") {
+        return (
+          Array.isArray(value) &&
+          value.length >= Math.max(1, Number(field.minItems) || 0)
+        );
+      }
+      return value !== undefined;
+    };
+
+    const missingRequiredFields = (form, answers) =>
+      (form?.fields ?? []).filter(
+        (field) => field.required && !fieldSatisfied(field, answers)
+      );
+
+    const describeSelected = (field, answers) => {
+      const labels = (field.options || [])
+        .filter((choice) => isChoiceSelected(field, answers, choice))
+        .map((choice) => choice.label);
+      return labels.length ? labels.join(", ") : "—";
+    };
+
+    const formHeading = (form) => {
+      const title = truncate(form.title, 150) || "OpenCode";
+      return `📝 <@${userId}> **${title}**`;
+    };
+
+    // One Discord message is sent per form field so it is always clear which
+    // options belong to which question. Each message carries the question
+    // title and description.
+    const fieldContent = (form, field, { final = false } = {}) => {
+      const question = truncate(field?.title || field?.key || "?", 150);
+      const description = field?.description
+        ? `\n${truncate(field.description, 400)}`
+        : "";
+      const legend = (field?.options || [])
+        .filter((choice) => choice.description)
+        .map(
+          (choice) =>
+            `• ${truncate(choice.label, 60)} — ${truncate(
+              choice.description,
+              160
+            )}`
+        )
+        .join("\n");
+      const legendBlock = legend ? `\n\n${legend}` : "";
+      const chosen = field ? describeSelected(field, form.answers) : "—";
+
+      if (final) {
+        return clamp(
+          `✅ <@${userId}> **${question}**${description}\n**Resposta:** ${truncate(
+            chosen,
+            200
+          )}`
+        );
+      }
+
+      return clamp(
+        `${formHeading(form)}\n**${question}**${description}${legendBlock}\n\nClica numa opção 👇`
+      );
+    };
+
+    const buildFieldComponents = (form, field, token) => {
+      const rows = [];
+      let row = { type: 1, components: [] };
+
+      for (const choice of field.options) {
+        const selected = isChoiceSelected(field, form.answers, choice);
+        row.components.push({
+          type: 2,
+          style: selected ? 3 : 1,
+          label:
+            truncate(`${selected ? "✅ " : ""}${choice.label}`, 80) ||
+            String(choice.number),
+          custom_id: `oc|f|${token}|${choice.number}`,
+        });
+
+        if (row.components.length === 5) {
+          rows.push(row);
+          row = { type: 1, components: [] };
+        }
+      }
+
+      if (row.components.length) rows.push(row);
+
+      // Multiselect fields can hold several values, so let the user decide
+      // when to send instead of submitting on the first click.
+      if (field.type === "multiselect") {
+        rows.push({
+          type: 1,
+          components: [
+            {
+              type: 2,
+              style: fieldSatisfied(field, form.answers) ? 3 : 2,
+              label: "✅ Enviar",
+              custom_id: `oc|fs|${token}`,
+            },
+          ],
+        });
+      }
+
+      return rows.length <= 5 ? rows : null;
+    };
+
+    const formAnswerHint = (form) =>
+      (form?.fields?.length ?? 0) > 1
+        ? "Responde com o número de uma opção de cada campo, separados por vírgulas (ex.: `1,4,7`)."
+        : "Responde com o número de uma das opções.";
 
     const sendMessage = async (content, options = {}) => {
       if (botToken && !channelId) {
@@ -489,14 +637,15 @@ export default {
           { timeout: 20_000 },
           (error, _stdout, stderr) => {
             if (error) {
+              const detail =
+                String(stderr || "").trim() || String(error);
               console.error(
                 "[discord-notification] form reply failed:",
-                String(error),
-                stderr
+                detail
               );
-              resolve(false);
+              resolve({ ok: false, error: detail });
             } else {
-              resolve(true);
+              resolve({ ok: true });
             }
           }
         );
@@ -1107,7 +1256,17 @@ export default {
 
         if (!answer) {
           await sendMessage(
-            `❓ <@${userId}> Não percebi. Responde com o número de uma das opções.`
+            `❓ <@${userId}> Não percebi. ${formAnswerHint(pending.form)}`
+          );
+          return;
+        }
+
+        const missing = missingRequiredFields(pending.form, answer);
+        if (missing.length) {
+          await sendMessage(
+            `❓ <@${userId}> Faltam escolher: ${missing
+              .map((field) => truncate(field.title, 50))
+              .join(", ")}. ${formAnswerHint(pending.form)}`
           );
           return;
         }
@@ -1119,14 +1278,18 @@ export default {
           )
           .join(" · ");
 
-        const ok = await replyToForm(pending.form, answer);
+        const result = await replyToForm(pending.form, answer);
 
-        if (ok) {
+        if (result.ok) {
           pending.form = null;
+          writeStatus();
           await sendMessage(`✅ <@${userId}> Resposta enviada (${label}).`);
         } else {
           await sendMessage(
-            `❌ <@${userId}> Não consegui enviar a resposta (o formulário pode já ter sido respondido).`
+            `❌ <@${userId}> Não consegui enviar a resposta: ${truncate(
+              result.error,
+              300
+            )}`
           );
         }
         return;
@@ -1223,12 +1386,69 @@ export default {
       }
     };
 
-    const editInteraction = async (interaction, content) => {
+    const editInteraction = async (interaction, content, components = []) => {
       await botRequest(
         `/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`,
         "PATCH",
-        { content, components: [] }
+        { content, components }
       );
+    };
+
+    // Edit a specific channel message (used to update the per-field form
+    // messages, which may not be the interaction's own message).
+    const editMessage = async (messageID, content, components = []) => {
+      if (!messageID || !channelId) return;
+      await botRequest(`/channels/${channelId}/messages/${messageID}`, "PATCH", {
+        content,
+        components,
+      });
+    };
+
+    // Ephemeral reply that only the owner sees, without touching the form
+    // message (so its buttons survive).
+    const followupInteraction = (interaction, content) =>
+      botRequest(
+        `/webhooks/${interaction.application_id}/${interaction.token}`,
+        "POST",
+        { content, flags: 64 }
+      );
+
+    const finalizeFormMessages = async (form) => {
+      for (const field of form.fields) {
+        const messageID = form.messages?.[field.key];
+        if (!messageID) continue;
+        await editMessage(
+          messageID,
+          fieldContent(form, field, { final: true }),
+          []
+        );
+      }
+    };
+
+    const clearFormMessages = async (form, note) => {
+      for (const field of form.fields) {
+        const messageID = form.messages?.[field.key];
+        if (!messageID) continue;
+        await editMessage(
+          messageID,
+          clamp(`${note}\n**${truncate(field.title || field.key, 150)}**`),
+          []
+        );
+      }
+    };
+
+    // When the form is answered in the app (not via Discord), pull the saved
+    // answer so the Discord messages can show it and drop their buttons.
+    const finalizeFormFromServer = async (form) => {
+      const result = await serverRequest(
+        "GET",
+        `/api/session/${form.sessionID}/form/${form.formID}`
+      );
+      const answer = result?.data?.state?.answer;
+      if (answer && typeof answer === "object") {
+        form.answers = answer;
+      }
+      await finalizeFormMessages(form);
     };
 
     let slashRegistered = false;
@@ -1506,16 +1726,78 @@ export default {
           return;
         }
 
-        const ok = await replyToForm(form, { [choice.key]: choice.value });
+        const field = form.fields.find((item) => item.key === choice.key);
+
+        if (!field) {
+          await editInteraction(interaction, "❌ Opção inválida.");
+          return;
+        }
+
+        if (field.type === "multiselect") {
+          const current = Array.isArray(form.answers[choice.key])
+            ? form.answers[choice.key]
+            : [];
+          form.answers[choice.key] = current.includes(choice.value)
+            ? current.filter((value) => value !== choice.value)
+            : [...current, choice.value];
+        } else {
+          form.answers[choice.key] = choice.value;
+        }
+
+        const hasMultiselect = form.fields.some(
+          (item) => item.type === "multiselect"
+        );
+        const complete =
+          missingRequiredFields(form, form.answers).length === 0;
+
+        // Single-select forms submit as soon as every field has a choice;
+        // forms with multiselect fields keep collecting until "Enviar".
+        if (complete && !hasMultiselect) {
+          const result = await replyToForm(form, form.answers);
+          pending.form = null;
+          writeStatus();
+          if (result.ok) {
+            await finalizeFormMessages(form);
+          } else {
+            await sendMessage(
+              `❌ <@${userId}> Falha ao enviar: ${truncate(result.error, 250)}`
+            );
+          }
+          return;
+        }
+
+        // Refresh only the message belonging to the field that was clicked.
+        const messageID = form.messages?.[field.key] || interaction.message?.id;
+        await editMessage(
+          messageID,
+          fieldContent(form, field),
+          buildFieldComponents(form, field, token) || []
+        );
+        return;
+      }
+
+      if (kind === "fs" && pending.form && pending.form.token === token) {
+        const form = pending.form;
+        const missing = missingRequiredFields(form, form.answers);
+
+        if (missing.length) {
+          await followupInteraction(
+            interaction,
+            `⚠️ <@${userId}> Ainda faltam: ${missing
+              .map((field) => truncate(field.title, 40))
+              .join(", ")}`
+          );
+          return;
+        }
+
+        const result = await replyToForm(form, form.answers);
         pending.form = null;
         writeStatus();
-        await editInteraction(
-          interaction,
-          `✅ <@${userId}> escolheu: **${truncate(choice.label, 150)}**`
-        );
-        if (!ok) {
+        if (result.ok) {
+          await finalizeFormMessages(form);
+        } else {
           await sendMessage(
-            `❌ <@${userId}> Falha ao enviar a resposta (o formulário pode já ter sido respondido).`
+            `❌ <@${userId}> Falha ao enviar: ${truncate(result.error, 250)}`
           );
         }
         return;
@@ -1706,7 +1988,17 @@ export default {
 
           if (event.type === "form.replied" || event.type === "form.cancelled") {
             if (pending.form && event.data?.id === pending.form.formID) {
+              const form = pending.form;
               pending.form = null;
+              writeStatus();
+              if (event.type === "form.cancelled") {
+                void clearFormMessages(
+                  form,
+                  `❌ <@${userId}> Pergunta cancelada (respondida na app).`
+                );
+              } else {
+                void finalizeFormFromServer(form);
+              }
             }
             continue;
           }
@@ -1733,41 +2025,51 @@ export default {
 
               if (form) {
                 const presentation = buildFormPresentation(form);
-                const singleField =
-                  new Set(presentation.choices.map((item) => item.key)).size <=
-                    1 &&
-                  presentation.choices.length > 0 &&
-                  presentation.choices.every((item) => item.number !== null);
 
                 pending.form = {
                   sessionID: form.sessionID,
                   formID: form.id,
                   title: form.title,
                   choices: presentation.choices,
+                  fields: presentation.fields,
+                  answers: {},
+                  messages: {},
                   token,
                 };
 
-                const canUseButtons =
+                const buttonable =
                   Boolean(botToken) &&
                   Boolean(channelId) &&
-                  singleField &&
-                  presentation.choices.length <= 25;
+                  presentation.fields.length > 0 &&
+                  presentation.fields.every((field) => !field.freeText);
 
-                if (canUseButtons) {
-                  const content = `📝 <@${userId}> OpenCode is waiting for you to choose!\n**${
-                    truncate(form.title, 150) ||
-                    "OpenCode is waiting for your choice"
-                  }**\n\nClica numa opção 👇`;
-                  const sent = await sendMessage(content, {
-                    components: buildButtonComponents(
-                      presentation.choices,
-                      "f",
-                      token
-                    ),
-                  });
+                const fieldComponents = buttonable
+                  ? presentation.fields.map((field) =>
+                      buildFieldComponents(pending.form, field, token)
+                    )
+                  : [];
 
-                  if (!sent.ok) {
-                    await sendMessage(getAttentionMessage(event));
+                if (buttonable && fieldComponents.every(Boolean)) {
+                  // One message per question so the options are never mixed up.
+                  for (
+                    let index = 0;
+                    index < presentation.fields.length;
+                    index += 1
+                  ) {
+                    const field = presentation.fields[index];
+                    const sent = await sendMessage(
+                      fieldContent(pending.form, field),
+                      { components: fieldComponents[index] }
+                    );
+
+                    if (sent?.ok) {
+                      const messageID = sent.data?.id;
+                      if (messageID) {
+                        pending.form.messages[field.key] = messageID;
+                      }
+                    } else {
+                      await sendMessage(getAttentionMessage(event));
+                    }
                   }
                 } else {
                   await sendMessage(getAttentionMessage(event));
